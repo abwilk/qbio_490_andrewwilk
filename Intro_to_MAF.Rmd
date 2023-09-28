@@ -1,0 +1,150 @@
+---
+title: "Intro to MAF"
+author: Nicole Black, Wade Boohar
+date: 07/17/22
+updated: 09/17/23
+# Name: Andrew Wilk
+# partner name: Tri Tong
+---
+
+***Deliverables***
+-Upload this R Notebook to your GitHub and submit the link to your Repo on BB.
+-Include any graphs or figures created in this assignment in the folder with your R notebook with descriptive file names.
+
+Since this is an optional partner activity, it is okay if your answers are the same as your partner’s as long as everyone understands it and could explain it in their own words if asked. Each person must individually push their code to Github. *At the top of your R Notebook, write the name of you and your partner(s) as a comment.*
+
+***Complete the following coding activity and answer any following questions as comments in your R Notebook***
+
+In MAF_Tutorial.Rmd, you looked at how to analyze mutation data in terms of clinical variables as well as mutation status. In this assignment, you will need to combine the two skills to demonstrate your understanding of categorical variables and R data structures.
+
+*Pre-Assignment*
+Load all necessary packages, read in the clinical data .csv file you have in your analysis_data folder, and instantiate the MAF_object.
+```{r}
+library(BiocManager)
+library(TCGAbiolinks)
+library(maftools)
+
+
+clinic <- read.csv("/Users/abwilk/Documents/Fall 2023/QBIO 490/qbio_490_andrewwilk/analysis_data/brca_clinical_data.csv")
+
+maf_query <- GDCquery(
+    project = "TCGA-BRCA", 
+    data.category = "Simple Nucleotide Variation", 
+    access = "open", # we only have access to somatic mutations which are open access
+    data.type = "Masked Somatic Mutation", 
+    workflow.type = "Aliquot Ensemble Somatic Variant Merging and Masking"
+)
+
+GDCdownload(maf_query)
+
+maf <- GDCprepare(maf_query) # as long as it runs, ignore any errors
+
+maf_object <- read.maf(maf = maf, 
+                       clinicalData = clinic,
+                       isTCGA = TRUE)
+
+
+```
+
+
+*1*
+Choose a clinical variable (or any variable from clin_rad or clin_drug) to separate your populations into two different groups and rewrite the column or create a new column with that variable as a factor. ***Do not use age or vital_status as your clinical variable.*** Hint: if your variable is continuous, you will need to determine your own cutoffs for the different levels of the factor. If your variable is categorical and has more than two possible values, choose the two that are the most common.
+```{r}
+#choosing race as clinical variable. "WHITE" and "BLACK OR AFRICAN AMERICAN" are most common
+
+library(ggplot2)
+
+black_or_white_mask <- ifelse(maf_object@clinical.data$race == 'WHITE' | maf_object@clinical.data$race == 'BLACK OR AFRICAN AMERICAN',T,F)
+maf_object@clinical.data <- maf_object@clinical.data[black_or_white_mask,]
+#maf_object@clinical.data$race
+
+maf_object@clinical.data$race <- factor(maf_object@clinical.data$race, levels = c('WHITE','BLACK OR AFRICAN AMERICAN'))
+#maf_object@clinical.data$race
+
+
+
+```
+
+
+*2*
+Create a co-oncoplot with the top 10-20 (you choose) most mutated genes for the two groups. Pick one that has a large discrepancy in % mutated or type of mutations between the groups and research it. 
+Research it. What is the gene used for? Can you think of any reason for the discrepancy?
+```{r}
+white_mask <- ifelse(maf_object@clinical.data$race == 'WHITE',T,F)
+black_mask <- ifelse(maf_object@clinical.data$race == 'BLACK OR AFRICAN AMERICAN',T,F)
+
+white_patient_barcodes <- maf_object@clinical.data$Tumor_Sample_Barcode[white_mask]
+black_patient_barcodes <- maf_object@clinical.data$Tumor_Sample_Barcode[black_mask]
+
+white_maf = subsetMaf(maf_object, white_patient_barcodes)
+black_maf = subsetMaf(maf_object, black_patient_barcodes)
+
+cooncoplot = coOncoplot(m1 = white_maf, 
+           m2 = black_maf, 
+           m1Name = 'White Patients', 
+           m2Name = 'Black or African 
+           American Patients', 
+           borderCol = NA, geneNamefont = 0.5, gene_mar = 2,titleFontSize = 0.8)
+
+
+#ggsave(filename = "white_vs_black_coOncoplot.png", plot = cooncoplot, path = "/Users/abwilk/Documents/Fall 2023/QBIO 490/qbio_490_andrewwilk")
+
+
+# CDH1 encodes for the protein Cadherin-1. Cadherin-1 is a cell-cell adhesion protein. Loss of function in Cadherin-1 is thought to contribute to cancer progression by increasing proliferation, invasion, and/or metastasis. The discrepancy in CDH1 mutation incidence among black and white breast cancer patients is likely due to genetic differences among the groups. Perhaps it is more common for white people to carry an allele for another gene that contributes to a mutation in CDH1. Or black people more commonly carry an allele that is protective against mutation in CDH1.
+```
+
+
+*3*
+Create a contingency table with your variable and chosen gene. Run a Fisher’s Exact Test between presence of mutations for that gene and your clinical variable. Create and save a mosaic plot. 
+Interpret the output of the Fisher’s Exact Test in terms of the odds ratio and p-value.
+```{r}
+
+CDH1_mask <- ifelse(maf_object@data$Hugo_Symbol=='CDH1',T,F)
+CDH1_mut_pats <- maf_object@data$Tumor_Sample_Barcode[CDH1_mask]
+
+maf_object@clinical.data$CDH1_mut_status <- maf_object@clinical.data$Tumor_Sample_Barcode %in% CDH1_mut_pats 
+maf_object@clinical.data$CDH1_mut_status <- ifelse(maf_object@clinical.data$CDH1_mut_status == 'TRUE','Mutation','No Mutation')
+maf_object@clinical.data$CDH1_mut_status <- factor(maf_object@clinical.data$CDH1_mut_status, levels = c('Mutation','No Mutation'))
+
+contig <- table(maf_object@clinical.data$race,maf_object@clinical.data$CDH1_mut_status)
+
+mosaicplot(contig)
+
+fisher_test = fisher.test(contig)
+
+fisher_test
+fisher_test$p.value
+
+# a p-value of 0.005 < 0.05 and suggests that the discrepancy in CDH1 mutation incidence between black and white cancer patients is statistically significant.
+# An odds ratio of 2.52 suggests that you are 2.52 times as likely to have a mutation in CDH1 if you are a white breast cancer patient compared to if you are a black patient.
+
+```
+
+
+*4*
+Subset your maf_object based on your chosen clinical variable and create a co-lollipop plot of your chosen gene divided between the two different clinical variable possibilities. Include descriptive names on your plot.
+Do you notice any difference in terms of mutations (e.g. sites, types, number) between the two populations?
+```{r}
+lollipopPlot2(m1 = white_maf, 
+              m2 = black_maf, 
+              m1_name = "White Patients",
+              m2_name = "Black or African American Patients",
+              gene = "CDH1")
+# The sample size for white patients is much higher than for black patients so it is hard to rigorously identify differences qualitatively. The mutations for black patients are spread out among the different domains. As are the mutations for white patients. 
+```
+
+
+*5*
+Create your Overall_Survival_Status column and create a mafSurvival KM plot based on mutations in your chosen gene.
+Does there seem to be a difference? Hypothesize why or not based on the other analysis you did with the gene above.
+```{r}
+maf_object@clinical.data$Overall_Survival_Status <- ifelse(maf_object@clinical.data$vital_status == "Alive", T,F)
+
+mafSurvival(maf = maf_object,
+            genes = "CDH1", ## pick a gene of your choosing
+            time = "last_contact_days_to", ## name of the column in maf_object@clinical.data containing survival time
+            Status = "Overall_Survival_Status", ## name of the column that contains a boolean value for death events, you may need to recreate this... 
+            isTCGA = TRUE)
+
+# There does not appear to be a difference between CDH1 mutant vs WT patients. As we saw earlier, there are many mores genes that have a high mutation rate in this cancer. Perhaps mutation in just CDH1 is not extremely lethal, but in combination with other mutations it could be more lethal. But that remains to be supported - it is just speculation. 
+```
